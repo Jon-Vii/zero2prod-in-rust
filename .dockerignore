@@ -1,0 +1,8 @@
+target
+.git
+.env
+.env.example
+tests
+scripts
+migrations
+bacon.toml
