@@ -8,6 +8,8 @@ struct TestApp {
 }
 
 async fn spawn_app() -> TestApp {
+    zero2prod::telemetry::init_test_subscriber();
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("failed to bind random port");
@@ -61,6 +63,7 @@ async fn health_check_works() {
 
     assert!(response.status().is_success());
     assert_eq!(Some(0), response.content_length());
+    assert!(response.headers().contains_key("x-request-id"));
 }
 
 #[tokio::test]
