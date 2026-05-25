@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: zero2prod
+    runtime: docker
+    plan: free
+    healthCheckPath: /health_check
+    envVars:
+      - key: APP_ENVIRONMENT
+        value: production
+      - key: APP_DATABASE__HOST
+        fromDatabase:
+          name: zero2prod-db
+          property: host
+      - key: APP_DATABASE__PORT
+        fromDatabase:
+          name: zero2prod-db
+          property: port
+      - key: APP_DATABASE__USERNAME
+        fromDatabase:
+          name: zero2prod-db
+          property: user
+      - key: APP_DATABASE__PASSWORD
+        fromDatabase:
+          name: zero2prod-db
+          property: password
+      - key: APP_DATABASE__DATABASE_NAME
+        fromDatabase:
+          name: zero2prod-db
+          property: database
+
+databases:
+  - name: zero2prod-db
+    databaseName: newsletter
+    user: newsletter
+    plan: free

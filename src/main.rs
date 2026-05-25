@@ -3,7 +3,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     zero2prod::telemetry::init_subscriber();
 
     let configuration = zero2prod::configuration::get_configuration()?;
-    let address = format!("127.0.0.1:{}", configuration.application_port);
+    let address = format!(
+        "{}:{}",
+        configuration.application_host, configuration.application_port
+    );
     let connection_pool =
         sqlx::PgPool::connect(&configuration.database.connection_string()).await?;
 

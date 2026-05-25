@@ -1,8 +1,10 @@
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
+use std::env;
 
 #[derive(Deserialize)]
 pub struct Settings {
+    pub application_host: String,
     pub application_port: u16,
     pub database: DatabaseSettings,
 }
@@ -14,34 +16,54 @@ pub struct DatabaseSettings {
     pub port: u16,
     pub host: String,
     pub database_name: String,
+    pub require_ssl: bool,
 }
 
 impl DatabaseSettings {
     pub fn connection_string(&self) -> String {
         format!(
-            "postgres://{}:{}@{}:{}/{}",
+            "postgres://{}:{}@{}:{}/{}?sslmode={}",
             self.username,
             self.password.expose_secret(),
             self.host,
             self.port,
-            self.database_name
+            self.database_name,
+            self.ssl_mode()
         )
     }
 
     pub fn connection_string_without_db(&self) -> String {
         format!(
-            "postgres://{}:{}@{}:{}",
+            "postgres://{}:{}@{}:{}?sslmode={}",
             self.username,
             self.password.expose_secret(),
             self.host,
-            self.port
+            self.port,
+            self.ssl_mode()
         )
+    }
+
+    fn ssl_mode(&self) -> &'static str {
+        if self.require_ssl {
+            "require"
+        } else {
+            "prefer"
+        }
     }
 }
 
 pub fn get_configuration() -> Result<Settings, config::ConfigError> {
+    let environment = env::var("APP_ENVIRONMENT").unwrap_or_else(|_| "local".into());
+    let environment_filename = format!("configuration/{environment}");
+
     let settings = config::Config::builder()
-        .add_source(config::File::with_name("configuration"))
+        .add_source(config::File::with_name("configuration/base"))
+        .add_source(config::File::with_name(&environment_filename))
+        .add_source(
+            config::Environment::with_prefix("APP")
+                .prefix_separator("_")
+                .separator("__"),
+        )
         .build()?;
 
     settings.try_deserialize::<Settings>()
