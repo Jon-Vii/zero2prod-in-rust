@@ -1,54 +1,20 @@
 pub mod configuration;
+pub mod domain;
+mod routes;
 pub mod telemetry;
 
 use axum::{
     Router,
-    extract::{Form, State},
-    http::{HeaderName, Request, StatusCode},
+    http::{HeaderName, Request},
     routing::{get, post},
 };
-use serde::Deserialize;
+use routes::{health_check, subscribe};
 use sqlx::PgPool;
 use tokio::net::TcpListener;
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::TraceLayer,
 };
-use uuid::Uuid;
-
-async fn health_check() -> StatusCode {
-    StatusCode::OK
-}
-
-#[derive(Deserialize)]
-struct SubscribeForm {
-    name: String,
-    email: String,
-}
-
-async fn subscribe(State(pool): State<PgPool>, Form(form): Form<SubscribeForm>) -> StatusCode {
-    tracing::info!("Saving a new subscriber");
-
-    let result = sqlx::query(
-        r#"
-        INSERT INTO subscriptions (id, email, name, subscribed_at)
-        VALUES ($1, $2, $3, now())
-        "#,
-    )
-    .bind(Uuid::new_v4())
-    .bind(form.email)
-    .bind(form.name)
-    .execute(&pool)
-    .await;
-
-    match result {
-        Ok(_) => StatusCode::OK,
-        Err(error) => {
-            tracing::error!(%error, "Failed to save new subscriber");
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
-    }
-}
 
 pub fn app(pool: PgPool) -> Router {
     let request_id_header = HeaderName::from_static("x-request-id");

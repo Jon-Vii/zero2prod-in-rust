@@ -21,6 +21,10 @@ tower-http = { version = "0.6.11", features = ["request-id", "trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt", "json"] }
 uuid = { version = "1.23.1", features = ["v4"] }
+validator = "0.20.0"
 
 [dev-dependencies]
+fake = "4.4.0"
+quickcheck = "1.0.3"
+quickcheck_macros = "1.1.0"
 reqwest = "0.13.3"
