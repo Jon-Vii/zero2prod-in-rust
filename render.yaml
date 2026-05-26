@@ -7,6 +7,8 @@ services:
     envVars:
       - key: APP_ENVIRONMENT
         value: production
+      - key: APP_APPLICATION_BASE_URL
+        value: https://zero2prod-m5fi.onrender.com
       - key: APP_DATABASE__HOST
         fromDatabase:
           name: zero2prod-db

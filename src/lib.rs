@@ -1,14 +1,16 @@
 pub mod configuration;
 pub mod domain;
+pub mod email_client;
 mod routes;
 pub mod telemetry;
 
+use crate::email_client::EmailClient;
 use axum::{
     Router,
     http::{HeaderName, Request},
     routing::{get, post},
 };
-use routes::{health_check, subscribe};
+use routes::{confirm, health_check, subscribe};
 use sqlx::PgPool;
 use tokio::net::TcpListener;
 use tower_http::{
@@ -16,13 +18,21 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-pub fn app(pool: PgPool) -> Router {
+#[derive(Clone)]
+pub struct ApplicationState {
+    pub db_pool: PgPool,
+    pub email_client: EmailClient,
+    pub application_base_url: String,
+}
+
+pub fn app(state: ApplicationState) -> Router {
     let request_id_header = HeaderName::from_static("x-request-id");
     let request_id_header_for_span = request_id_header.clone();
 
     Router::new()
         .route("/health_check", get(health_check))
         .route("/subscriptions", post(subscribe))
+        .route("/subscriptions/confirm", get(confirm))
         .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
         .layer(
             TraceLayer::new_for_http().make_span_with(move |request: &Request<_>| {
@@ -41,14 +51,14 @@ pub fn app(pool: PgPool) -> Router {
             }),
         )
         .layer(SetRequestIdLayer::new(request_id_header, MakeRequestUuid))
-        .with_state(pool)
+        .with_state(state)
 }
 
-pub async fn run(listener: TcpListener, pool: PgPool) -> Result<(), std::io::Error> {
-    axum::serve(listener, app(pool)).await
+pub async fn run(listener: TcpListener, state: ApplicationState) -> Result<(), std::io::Error> {
+    axum::serve(listener, app(state)).await
 }
 
-pub async fn run_on(address: &str, pool: PgPool) -> Result<(), std::io::Error> {
+pub async fn run_on(address: &str, state: ApplicationState) -> Result<(), std::io::Error> {
     let listener = TcpListener::bind(address).await?;
-    run(listener, pool).await
+    run(listener, state).await
 }

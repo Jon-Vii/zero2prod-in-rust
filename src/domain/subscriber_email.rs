@@ -1,5 +1,6 @@
 use validator::ValidateEmail;
 
+#[derive(Clone)]
 pub struct SubscriberEmail(String);
 
 impl SubscriberEmail {

@@ -6,7 +6,9 @@ use std::env;
 pub struct Settings {
     pub application_host: String,
     pub application_port: u16,
+    pub application_base_url: String,
     pub database: DatabaseSettings,
+    pub email_client: EmailClientSettings,
 }
 
 #[derive(Deserialize)]
@@ -17,6 +19,13 @@ pub struct DatabaseSettings {
     pub host: String,
     pub database_name: String,
     pub require_ssl: bool,
+}
+
+#[derive(Deserialize)]
+pub struct EmailClientSettings {
+    pub base_url: String,
+    pub sender_email: String,
+    pub authorization_token: SecretString,
 }
 
 impl DatabaseSettings {
