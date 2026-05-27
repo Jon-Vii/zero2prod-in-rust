@@ -1,7 +1,7 @@
 use crate::{ApplicationState, domain::SubscriberEmail};
 use axum::{
     Json,
-    extract::State,
+    extract::{State, rejection::JsonRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -18,6 +18,8 @@ pub struct Newsletter {
 
 #[derive(Debug, Error)]
 pub enum PublishError {
+    #[error("invalid newsletter issue")]
+    ValidationError,
     #[error("failed to fetch confirmed subscribers")]
     SubscriberLookupError(#[source] sqlx::Error),
     #[error("invalid subscriber email stored in the database")]
@@ -29,6 +31,7 @@ pub enum PublishError {
 impl IntoResponse for PublishError {
     fn into_response(self) -> Response {
         match self {
+            Self::ValidationError => StatusCode::BAD_REQUEST.into_response(),
             Self::SubscriberLookupError(error) => {
                 tracing::error!(%error, "Failed to fetch confirmed subscribers");
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -47,8 +50,10 @@ impl IntoResponse for PublishError {
 
 pub async fn publish_newsletter(
     State(state): State<ApplicationState>,
-    Json(newsletter): Json<Newsletter>,
+    newsletter: Result<Json<Newsletter>, JsonRejection>,
 ) -> Result<StatusCode, PublishError> {
+    let Json(newsletter) = newsletter.map_err(|_| PublishError::ValidationError)?;
+
     let confirmed_subscribers = get_confirmed_subscribers(&state.db_pool).await?;
 
     for subscriber in confirmed_subscribers {

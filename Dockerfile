@@ -23,7 +23,7 @@ RUN cargo chef cook --release --bin zero2prod --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --bin zero2prod
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 WORKDIR /app
 
