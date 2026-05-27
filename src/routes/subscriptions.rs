@@ -5,9 +5,11 @@ use crate::{
 use axum::{
     extract::{Form, Query, State},
     http::StatusCode,
+    response::{IntoResponse, Response},
 };
 use serde::Deserialize;
 use sqlx::{PgPool, Postgres, Transaction};
+use thiserror::Error;
 use uuid::Uuid;
 
 #[derive(Deserialize)]
@@ -21,46 +23,89 @@ pub struct ConfirmationParameters {
     token: String,
 }
 
+#[derive(Debug, Error)]
+pub enum SubscribeError {
+    #[error("invalid subscriber data")]
+    ValidationError,
+    #[error("failed to store subscription details")]
+    StoreTokenError(#[source] sqlx::Error),
+    #[error("failed to send confirmation email")]
+    SendEmailError(#[source] reqwest::Error),
+}
+
+impl IntoResponse for SubscribeError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::ValidationError => StatusCode::BAD_REQUEST.into_response(),
+            Self::StoreTokenError(error) => {
+                tracing::error!(%error, "Failed to store subscription details");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+            Self::SendEmailError(error) => {
+                tracing::error!(%error, "Failed to send a confirmation email");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum ConfirmError {
+    #[error("invalid subscription token")]
+    InvalidToken,
+    #[error("failed to fetch subscription token")]
+    TokenLookupError(#[source] sqlx::Error),
+    #[error("failed to confirm subscriber")]
+    ConfirmationError(#[source] sqlx::Error),
+}
+
+impl IntoResponse for ConfirmError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::InvalidToken => StatusCode::UNAUTHORIZED.into_response(),
+            Self::TokenLookupError(error) => {
+                tracing::error!(%error, "Failed to fetch subscription token");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+            Self::ConfirmationError(error) => {
+                tracing::error!(%error, "Failed to confirm subscriber");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+        }
+    }
+}
+
 pub async fn subscribe(
     State(state): State<ApplicationState>,
     Form(form): Form<SubscribeForm>,
-) -> StatusCode {
-    let new_subscriber = match NewSubscriber::try_from(form) {
-        Ok(subscriber) => subscriber,
-        Err(_) => return StatusCode::BAD_REQUEST,
-    };
+) -> Result<StatusCode, SubscribeError> {
+    let new_subscriber =
+        NewSubscriber::try_from(form).map_err(|_| SubscribeError::ValidationError)?;
 
     tracing::info!("Saving a new subscriber");
 
     let subscriber_id = Uuid::new_v4();
     let subscription_token = generate_subscription_token();
 
-    if let Err(error) = store_subscription(
+    store_subscription(
         &state.db_pool,
         &new_subscriber,
         subscriber_id,
         &subscription_token,
     )
     .await
-    {
-        tracing::error!(%error, "Failed to store subscription details");
-        return StatusCode::INTERNAL_SERVER_ERROR;
-    }
+    .map_err(SubscribeError::StoreTokenError)?;
 
     let confirmation_link = confirmation_link(&state.application_base_url, &subscription_token);
     let (html_body, plain_body) = confirmation_email_body(&confirmation_link);
 
-    match state
+    state
         .email_client
         .send_email(new_subscriber.email, "Welcome!", &html_body, &plain_body)
         .await
-    {
-        Ok(_) => StatusCode::OK,
-        Err(error) => {
-            tracing::error!(%error, "Failed to send a confirmation email");
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
-    }
+        .map_err(SubscribeError::SendEmailError)?;
+
+    Ok(StatusCode::OK)
 }
 
 async fn store_subscription(
@@ -136,8 +181,8 @@ fn confirmation_email_body(confirmation_link: &str) -> (String, String) {
 pub async fn confirm(
     State(state): State<ApplicationState>,
     Query(parameters): Query<ConfirmationParameters>,
-) -> StatusCode {
-    let subscriber_id = match sqlx::query_scalar::<_, Uuid>(
+) -> Result<StatusCode, ConfirmError> {
+    let subscriber_id = sqlx::query_scalar::<_, Uuid>(
         r#"
         SELECT subscriber_id
         FROM subscription_tokens
@@ -147,16 +192,10 @@ pub async fn confirm(
     .bind(parameters.token)
     .fetch_optional(&state.db_pool)
     .await
-    {
-        Ok(Some(subscriber_id)) => subscriber_id,
-        Ok(None) => return StatusCode::UNAUTHORIZED,
-        Err(error) => {
-            tracing::error!(%error, "Failed to fetch subscription token");
-            return StatusCode::INTERNAL_SERVER_ERROR;
-        }
-    };
+    .map_err(ConfirmError::TokenLookupError)?
+    .ok_or(ConfirmError::InvalidToken)?;
 
-    match sqlx::query(
+    sqlx::query(
         r#"
         UPDATE subscriptions
         SET status = 'confirmed'
@@ -166,13 +205,9 @@ pub async fn confirm(
     .bind(subscriber_id)
     .execute(&state.db_pool)
     .await
-    {
-        Ok(_) => StatusCode::OK,
-        Err(error) => {
-            tracing::error!(%error, "Failed to confirm subscriber");
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
-    }
+    .map_err(ConfirmError::ConfirmationError)?;
+
+    Ok(StatusCode::OK)
 }
 
 impl TryFrom<SubscribeForm> for NewSubscriber {

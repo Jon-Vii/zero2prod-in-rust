@@ -10,7 +10,7 @@ use axum::{
     http::{HeaderName, Request},
     routing::{get, post},
 };
-use routes::{confirm, health_check, subscribe};
+use routes::{confirm, health_check, publish_newsletter, subscribe};
 use sqlx::PgPool;
 use tokio::net::TcpListener;
 use tower_http::{
@@ -33,6 +33,7 @@ pub fn app(state: ApplicationState) -> Router {
         .route("/health_check", get(health_check))
         .route("/subscriptions", post(subscribe))
         .route("/subscriptions/confirm", get(confirm))
+        .route("/newsletters", post(publish_newsletter))
         .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
         .layer(
             TraceLayer::new_for_http().make_span_with(move |request: &Request<_>| {

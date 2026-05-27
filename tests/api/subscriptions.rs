@@ -22,6 +22,23 @@ async fn subscribe_returns_a_200_for_valid_form_data() {
     assert_email_request_matches(&email_requests[0]);
 }
 
+#[tokio::test]
+async fn subscribe_stores_a_confirmation_token_for_valid_form_data() {
+    let app = spawn_app().await;
+
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    let response = app.post_subscriptions(body.into()).await;
+
+    assert!(response.status().is_success());
+
+    let token = app
+        .saved_subscription_token("ursula_le_guin@gmail.com")
+        .await;
+
+    assert!(!token.is_empty());
+}
+
 fn assert_email_request_matches(request: &Request) {
     let body: serde_json::Value =
         serde_json::from_slice(&request.body).expect("failed to parse email request body");

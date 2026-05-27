@@ -43,6 +43,15 @@ impl TestApp {
             .expect("failed to execute request")
     }
 
+    pub async fn post_newsletters(&self, body: serde_json::Value) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(format!("{}/newsletters", self.address))
+            .json(&body)
+            .send()
+            .await
+            .expect("failed to execute request")
+    }
+
     pub async fn saved_subscription(&self) -> SavedSubscription {
         let saved = sqlx::query("SELECT email, name, status FROM subscriptions")
             .fetch_one(&self.db_pool)
@@ -54,6 +63,23 @@ impl TestApp {
             name: saved.get("name"),
             status: saved.get("status"),
         }
+    }
+
+    pub async fn saved_subscription_token(&self, subscriber_email: &str) -> String {
+        let saved = sqlx::query(
+            r#"
+            SELECT subscription_token
+            FROM subscription_tokens
+            INNER JOIN subscriptions ON subscription_tokens.subscriber_id = subscriptions.id
+            WHERE subscriptions.email = $1
+            "#,
+        )
+        .bind(subscriber_email)
+        .fetch_one(&self.db_pool)
+        .await
+        .expect("failed to fetch saved subscription token");
+
+        saved.get("subscription_token")
     }
 
     pub async fn email_requests(&self) -> Vec<Request> {
@@ -72,6 +98,26 @@ impl TestApp {
             .send()
             .await
             .expect("failed to execute request")
+    }
+
+    pub async fn subscribe_confirmed(&self, email: &str) {
+        self.subscribe_unconfirmed(email).await;
+
+        let email_requests = self.email_requests().await;
+        let confirmation_link = get_confirmation_link(
+            email_requests
+                .last()
+                .expect("no confirmation email was sent"),
+        );
+
+        let response = self.get_subscription_confirmation(&confirmation_link).await;
+        assert!(response.status().is_success());
+    }
+
+    pub async fn subscribe_unconfirmed(&self, email: &str) {
+        let body = format!("name=Test%20User&email={}", email.replace('@', "%40"));
+        let response = self.post_subscriptions(body).await;
+        assert!(response.status().is_success());
     }
 }
 
