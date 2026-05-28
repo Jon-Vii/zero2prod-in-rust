@@ -50,7 +50,7 @@ where
         .with_http_only(true)
         .with_same_site(SameSite::Lax)
         .with_expiry(Expiry::OnInactivity(Duration::hours(1)))
-        .with_signed(Key::from(hmac_secret));
+        .with_signed(Key::derive_from(hmac_secret));
 
     Router::new()
         .route("/health_check", get(health_check))

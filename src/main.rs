@@ -11,6 +11,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let connection_pool =
         sqlx::PgPool::connect(&configuration.database.connection_string()).await?;
+    sqlx::migrate!("./migrations").run(&connection_pool).await?;
     let sender_email =
         zero2prod::domain::SubscriberEmail::parse(configuration.email_client.sender_email)?;
     let email_client = zero2prod::email_client::EmailClient::new(

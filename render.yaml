@@ -10,9 +10,12 @@ services:
       - key: APP_APPLICATION_BASE_URL
         value: https://zero2prod-m5fi.onrender.com
       - key: APP_HMAC_SECRET
-        sync: false
+        generateValue: true
       - key: APP_REDIS_URI
-        sync: false
+        fromService:
+          type: keyvalue
+          name: zero2prod-redis
+          property: connectionString
       - key: APP_EMAIL_CLIENT__SENDER_EMAIL
         sync: false
       - key: APP_EMAIL_CLIENT__AUTHORIZATION_TOKEN
@@ -37,6 +40,12 @@ services:
         fromDatabase:
           name: zero2prod-db
           property: database
+
+  - type: keyvalue
+    name: zero2prod-redis
+    plan: free
+    ipAllowList: []
+    maxmemoryPolicy: noeviction
 
 databases:
   - name: zero2prod-db
