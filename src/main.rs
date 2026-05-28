@@ -1,3 +1,5 @@
+use secrecy::ExposeSecret;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     zero2prod::telemetry::init_subscriber();
@@ -17,12 +19,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         configuration.email_client.authorization_token,
     )?;
     let state = zero2prod::ApplicationState {
-        db_pool: connection_pool,
-        email_client,
+        db_pool: connection_pool.clone(),
+        email_client: email_client.clone(),
         application_base_url: configuration.application_base_url,
     };
+    let redis_store = zero2prod::build_redis_store(&configuration.redis_uri).await?;
 
-    zero2prod::run_on(&address, state).await?;
+    let api = zero2prod::run_on(
+        &address,
+        state,
+        redis_store,
+        configuration.hmac_secret.expose_secret().as_bytes(),
+    );
+    let worker =
+        zero2prod::issue_delivery_worker::run_worker_until_stopped(connection_pool, email_client);
+
+    tokio::select! {
+        result = api => result?,
+        _ = worker => {}
+    }
 
     Ok(())
 }

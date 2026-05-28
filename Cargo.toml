@@ -12,17 +12,22 @@ name = "zero2prod"
 
 [dependencies]
 axum = "0.8.9"
+anyhow = "1.0.100"
+argon2 = { version = "0.5.3", features = ["std"] }
 config = "0.15.19"
-reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["cookies", "form", "json", "rustls"] }
 secrecy = { version = "0.10.3", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "uuid", "chrono"] }
 thiserror = "2.0.18"
+time = "0.3.44"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tower-http = { version = "0.6.11", features = ["request-id", "trace"] }
+tower-sessions = { version = "0.14.0", features = ["signed"] }
+tower-sessions-redis-store = { version = "0.16.0", features = ["enable-rustls"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt", "json"] }
-uuid = { version = "1.23.1", features = ["v4"] }
+uuid = { version = "1.23.1", features = ["serde", "v4"] }
 validator = "0.20.0"
 
 [dev-dependencies]

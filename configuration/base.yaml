@@ -1,5 +1,7 @@
 application_port: 8000
 application_base_url: "http://127.0.0.1:8000"
+hmac_secret: "0123456789012345678901234567890123456789012345678901234567890123"
+redis_uri: "redis://127.0.0.1:6379"
 database:
   port: 5432
   username: "postgres"

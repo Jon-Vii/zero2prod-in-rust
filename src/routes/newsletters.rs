@@ -1,101 +1,142 @@
-use crate::{ApplicationState, domain::SubscriberEmail};
+use crate::{
+    ApplicationState,
+    idempotency::{IdempotencyKey, NextAction, save_response, try_processing},
+};
 use axum::{
-    Json,
-    extract::{State, rejection::JsonRejection},
+    Form,
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
-use sqlx::Row;
+use sqlx::{Postgres, Transaction};
 use thiserror::Error;
+use tower_sessions::Session;
+use uuid::Uuid;
+
+use super::admin::{require_login, set_flash};
 
 #[derive(Deserialize)]
 pub struct Newsletter {
     title: String,
     text_content: String,
     html_content: String,
+    idempotency_key: String,
 }
 
 #[derive(Debug, Error)]
 pub enum PublishError {
-    #[error("invalid newsletter issue")]
-    ValidationError,
-    #[error("failed to fetch confirmed subscribers")]
-    SubscriberLookupError(#[source] sqlx::Error),
-    #[error("invalid subscriber email stored in the database")]
-    InvalidSubscriberEmail,
-    #[error("failed to send newsletter issue")]
-    SendEmailError(#[source] reqwest::Error),
+    #[error("invalid idempotency key")]
+    InvalidIdempotencyKey(#[source] anyhow::Error),
+    #[error("failed to publish newsletter issue")]
+    PublishIssueError(#[source] anyhow::Error),
 }
 
 impl IntoResponse for PublishError {
     fn into_response(self) -> Response {
         match self {
-            Self::ValidationError => StatusCode::BAD_REQUEST.into_response(),
-            Self::SubscriberLookupError(error) => {
-                tracing::error!(%error, "Failed to fetch confirmed subscribers");
-                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            Self::InvalidIdempotencyKey(error) => {
+                tracing::warn!(%error, "Invalid idempotency key");
+                StatusCode::BAD_REQUEST.into_response()
             }
-            Self::InvalidSubscriberEmail => {
-                tracing::error!("Invalid subscriber email stored in the database");
-                StatusCode::INTERNAL_SERVER_ERROR.into_response()
-            }
-            Self::SendEmailError(error) => {
-                tracing::error!(%error, "Failed to send newsletter issue");
+            Self::PublishIssueError(error) => {
+                tracing::error!(%error, "Failed to publish newsletter issue");
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
             }
         }
     }
 }
 
-pub async fn publish_newsletter(
+pub async fn admin_publish_newsletter(
     State(state): State<ApplicationState>,
-    newsletter: Result<Json<Newsletter>, JsonRejection>,
-) -> Result<StatusCode, PublishError> {
-    let Json(newsletter) = newsletter.map_err(|_| PublishError::ValidationError)?;
+    session: Session,
+    Form(newsletter): Form<Newsletter>,
+) -> Result<Response, Response> {
+    let user_id = require_login(&session).await?;
+    let idempotency_key = IdempotencyKey::try_from(newsletter.idempotency_key.clone())
+        .map_err(|error| PublishError::InvalidIdempotencyKey(error).into_response())?;
 
-    let confirmed_subscribers = get_confirmed_subscribers(&state.db_pool).await?;
-
-    for subscriber in confirmed_subscribers {
-        state
-            .email_client
-            .send_email(
-                subscriber.email,
-                &newsletter.title,
-                &newsletter.html_content,
-                &newsletter.text_content,
+    match try_processing(&state.db_pool, &idempotency_key, user_id)
+        .await
+        .map_err(|error| PublishError::PublishIssueError(error).into_response())?
+    {
+        NextAction::StartProcessing(mut transaction) => {
+            enqueue_newsletter_issue(&mut transaction, &newsletter)
+                .await
+                .map_err(|error| PublishError::PublishIssueError(error).into_response())?;
+            let response =
+                save_response(transaction, &idempotency_key, user_id, "/admin/newsletters")
+                    .await
+                    .map_err(|error| PublishError::PublishIssueError(error).into_response())?;
+            set_flash(
+                &session,
+                "The newsletter issue has been accepted - emails will go out shortly.",
             )
-            .await
-            .map_err(PublishError::SendEmailError)?;
+            .await;
+            Ok(response)
+        }
+        NextAction::ReturnSavedResponse(response) => {
+            set_flash(
+                &session,
+                "The newsletter issue has been accepted - emails will go out shortly.",
+            )
+            .await;
+            Ok(response)
+        }
     }
-
-    Ok(StatusCode::OK)
 }
 
-struct ConfirmedSubscriber {
-    email: SubscriberEmail,
+async fn enqueue_newsletter_issue(
+    transaction: &mut Transaction<'static, Postgres>,
+    newsletter: &Newsletter,
+) -> Result<(), anyhow::Error> {
+    let issue_id = insert_newsletter_issue(transaction, newsletter).await?;
+    enqueue_delivery_tasks(transaction, issue_id).await?;
+    Ok(())
 }
 
-async fn get_confirmed_subscribers(
-    pool: &sqlx::PgPool,
-) -> Result<Vec<ConfirmedSubscriber>, PublishError> {
-    let rows = sqlx::query(
+async fn insert_newsletter_issue(
+    transaction: &mut Transaction<'_, Postgres>,
+    newsletter: &Newsletter,
+) -> Result<Uuid, sqlx::Error> {
+    let issue_id = Uuid::new_v4();
+    sqlx::query(
         r#"
-        SELECT email
+        INSERT INTO newsletter_issues (
+            newsletter_issue_id,
+            title,
+            text_content,
+            html_content,
+            published_at
+        )
+        VALUES ($1, $2, $3, $4, now())
+        "#,
+    )
+    .bind(issue_id)
+    .bind(&newsletter.title)
+    .bind(&newsletter.text_content)
+    .bind(&newsletter.html_content)
+    .execute(&mut **transaction)
+    .await?;
+
+    Ok(issue_id)
+}
+
+async fn enqueue_delivery_tasks(
+    transaction: &mut Transaction<'_, Postgres>,
+    issue_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO issue_delivery_queue (newsletter_issue_id, subscriber_email)
+        SELECT $1, email
         FROM subscriptions
         WHERE status = 'confirmed'
         "#,
     )
-    .fetch_all(pool)
-    .await
-    .map_err(PublishError::SubscriberLookupError)?;
+    .bind(issue_id)
+    .execute(&mut **transaction)
+    .await?;
 
-    rows.into_iter()
-        .map(|row| {
-            let email: String = row.get("email");
-            SubscriberEmail::parse(email)
-                .map(|email| ConfirmedSubscriber { email })
-                .map_err(|_| PublishError::InvalidSubscriberEmail)
-        })
-        .collect()
+    Ok(())
 }

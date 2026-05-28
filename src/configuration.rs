@@ -7,6 +7,8 @@ pub struct Settings {
     pub application_host: String,
     pub application_port: u16,
     pub application_base_url: String,
+    pub hmac_secret: SecretString,
+    pub redis_uri: SecretString,
     pub database: DatabaseSettings,
     pub email_client: EmailClientSettings,
 }
